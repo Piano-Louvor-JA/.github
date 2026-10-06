@@ -38,7 +38,7 @@ jobs:
             const commit = await github.rest.repos.getCommit({ owner, repo, ref: sha });
             const title = commit.data.commit.message.split('\n')[0].replace(/[\r\n]/g, ' ');
             const ownRun = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
-            const visibleChecks = checks.filter((check) => check.details_url !== ownRun);
+            const visibleChecks = checks.filter((check) => !check.details_url?.startsWith(ownRun));
             const markdown = (value) => String(value).replace(/[\\`*_{}[\]<>()#+.!|]/g, '\\$&');
             const link = (check) => check.details_url || `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
             const isPassing = (check) => ['success', 'neutral', 'skipped'].includes(check.conclusion);
