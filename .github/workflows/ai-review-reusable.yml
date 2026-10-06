@@ -1,0 +1,59 @@
+# AI Review — reusable workflow da org Piano-Louvor-JA
+# Fonte única de verdade: todos os repos chamam ESTE workflow (jobs: uses:).
+# Pra trocar a ferramenta de análise (pr-agent → OCR → outra), muda SÓ AQUI.
+name: AI Review (org reusable)
+
+on:
+  workflow_call:
+    inputs:
+      runner-extra-instructions:
+        description: 'Instruções extras de review específicas do repo (opcional)'
+        required: false
+        type: string
+        default: ''
+      run-on-comment:
+        description: 'Se true, também roda via comentário /review'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: AI Review (pr-agent)
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/review') && github.event.issue.pull_request)
+    steps:
+      - uses: Codium-ai/pr-agent@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+          OPENAI_API_BASE: ${{ secrets.AI_REVIEW_BASE_URL || 'https://api.z.ai/api/coding/paas/v4' }}
+          CONFIG.GIT_PROVIDER: github
+          # LiteLLM exige provedor/modelo — prefixo openai/ = protocolo OpenAI contra a base z.ai
+          CONFIG.LLM_MODEL: openai/glm-4.6
+          CONFIG.FALLBACK_MODELS: 'openai/glm-4.5-air'
+          # pr-agent não conhece MAX_TOKENS dos modelos GLM — setar manualmente
+          CONFIG.CUSTOM_MODEL_MAX_TOKENS: '32000'
+          CONFIG.REVIEW_MAX_FILES: '40'
+          PR_REVIEWER.EXTRA_INSTRUCTIONS: >-
+            Projeto PIANO (hinos ao piano, multi-plataforma). Foque em:
+            (1) offline-first — dado do usuário nunca pode se perder com reload/background/update;
+            (2) erros engolidos (catch vazio, promise sem reject tratado);
+            (3) segredos/PII no diff;
+            (4) breaking change de API ou de store compartilhada;
+            (5) seguir o padrão do próprio repo (não importar padrão de outros projetos).
+            Responda em PT-BR. Seja específico: arquivo, linha, por quê.
+          ${{ inputs.runner-extra-instructions && format('PR_REVIEWER.EXTRA_INSTRUCTIONS_APPEND: {0}', inputs.runner-extra-instructions) || '' }}
+          PR_DESCRIPTION.PUBLISH: 'true'
+          PR_REVIEWER.REQUIRE_TESTS_REVIEW: 'true'
