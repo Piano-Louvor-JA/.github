@@ -38,7 +38,7 @@ jobs:
     timeout-minutes: 10
     if: >-
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      (github.event_name == 'issue_comment' && inputs.run-on-comment && github.event.comment.body == '/review' && github.event.issue.pull_request && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+      (github.event_name == 'issue_comment' && inputs.run-on-comment && startsWith(github.event.comment.body, '/review') || startsWith(github.event.comment.body, '/ask') || startsWith(github.event.comment.body, '/improve') || startsWith(github.event.comment.body, '/describe') && github.event.issue.pull_request && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     steps:
       - uses: Codium-ai/pr-agent@06a2991c0ce6b055c77fbcbd7f09faf4c5acfcaf
         env:
