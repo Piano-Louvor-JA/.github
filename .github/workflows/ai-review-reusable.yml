@@ -47,12 +47,12 @@ jobs:
       - id: agents
         name: Ler AGENTS.md do repo (se existir)
         run: |
+          delim="ghadelimiter_$(openssl rand -hex 12)"
           if [ -f AGENTS.md ]; then
-            # limita a 6KB pra não estourar o prompt
-            head -c 6144 AGENTS.md > /tmp/agents.md
-            echo "content<<EOF" >> "$GITHUB_OUTPUT"
-            cat /tmp/agents.md >> "$GITHUB_OUTPUT"
-            echo "EOF" >> "$GITHUB_OUTPUT"
+            echo "content<<$delim" >> "$GITHUB_OUTPUT"
+            head -c 6144 AGENTS.md >> "$GITHUB_OUTPUT"
+            echo "" >> "$GITHUB_OUTPUT"
+            echo "$delim" >> "$GITHUB_OUTPUT"
           else
             echo "content=" >> "$GITHUB_OUTPUT"
           fi
