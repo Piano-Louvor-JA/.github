@@ -21,6 +21,11 @@ on:
         required: false
         type: boolean
         default: true
+      org-context-repo:
+        description: 'Repo com contexto org-wide (AGENTS.md, skills) — vazio = desativado'
+        required: false
+        type: string
+        default: 'Piano-Louvor-JA/docs'
 
 permissions:
   contents: read
@@ -44,18 +49,34 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - id: orgctx
+        name: Clonar contexto da org (docs/AGENTS.md + skills)
+        run: |
+          repo='${{ inputs.org-context-repo }}'
+          mkdir -p /tmp/orgctx
+          if [ -n "$repo" ] && [ -n "${{ secrets.AI_REVIEW_ORG_TOKEN }}" ]; then
+            git clone --depth 1 "https://x-access-token:${{ secrets.AI_REVIEW_ORG_TOKEN }}@github.com/${repo}.git" /tmp/orgctx 2>/dev/null || true
+          fi
       - id: agents
         name: Ler AGENTS.md do repo (se existir)
         run: |
           delim="ghadelimiter_$(openssl rand -hex 12)"
-          if [ -f AGENTS.md ]; then
-            echo "content<<$delim" >> "$GITHUB_OUTPUT"
-            head -c 6144 AGENTS.md >> "$GITHUB_OUTPUT"
-            echo "" >> "$GITHUB_OUTPUT"
-            echo "$delim" >> "$GITHUB_OUTPUT"
-          else
-            echo "content=" >> "$GITHUB_OUTPUT"
-          fi
+          {
+            echo "content<<$delim"
+            # 1) contexto org-wide (repo docs): convenções + NUNCA faça + skills
+            if [ -f /tmp/orgctx/AGENTS.md ]; then
+              echo "## Regras da organização (docs/AGENTS.md)"
+              head -c 4096 /tmp/orgctx/AGENTS.md
+              echo ""
+            fi
+            # 2) AGENTS.md local do repo (override específico)
+            if [ -f AGENTS.md ]; then
+              echo "## Regras deste repositório (AGENTS.md)"
+              head -c 6144 AGENTS.md
+              echo ""
+            fi
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
       - uses: Codium-ai/pr-agent@06a2991c0ce6b055c77fbcbd7f09faf4c5acfcaf
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
