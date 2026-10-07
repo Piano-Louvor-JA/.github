@@ -7,6 +7,7 @@ permissions:
   checks: read
   contents: read
   issues: write
+  pull-requests: write
 
 concurrency:
   group: piano-ci-review-${{ github.repository }}-${{ github.event.pull_request.number }}
@@ -32,8 +33,8 @@ jobs:
             const markdown = (value) => String(value).replace(/[\\`*_{}[\]<>()#+.!|]/g, '\\$&');
             const link = (check) => check.details_url || ownRun;
             const ownRunId = String(context.runId);
-            const isOwnRun = (check) => new URL(check.details_url || ownRun).pathname
-              .split('/').filter(Boolean).at(-1) === ownRunId;
+            const isOwnRun = (check) => check.details_url?.split('/actions/runs/')[1]
+              ?.split('/')[0] === ownRunId;
             const isPassing = (check) => ['success', 'neutral', 'skipped'].includes(check.conclusion);
 
             const getChecks = async () => {
