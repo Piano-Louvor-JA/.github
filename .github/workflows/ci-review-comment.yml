@@ -1,0 +1,100 @@
+name: CI review comment
+
+on:
+  workflow_call:
+
+permissions:
+  checks: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: piano-ci-review-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  ci-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update CI review comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              core.setFailed('ci-review-comment must be called from a pull_request event');
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+            const sha = pr.head.sha;
+            const ownRun = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const markdown = (value) => String(value).replace(/[\\`*_{}[\]<>()#+.!|]/g, '\\$&');
+            const link = (check) => check.details_url || ownRun;
+            const ownRunId = String(context.runId);
+            const isOwnRun = (check) => new URL(check.details_url || ownRun).pathname
+              .split('/').filter(Boolean).at(-1) === ownRunId;
+            const isPassing = (check) => ['success', 'neutral', 'skipped'].includes(check.conclusion);
+
+            const getChecks = async () => {
+              const checks = [];
+              for (let page = 1; ; page += 1) {
+                const { data } = await github.rest.checks.listForRef({
+                  owner, repo, ref: sha, per_page: 100, page,
+                });
+                checks.push(...data.check_runs);
+                if (data.check_runs.length < 100) return checks.filter((check) => !isOwnRun(check));
+              }
+            };
+            const commit = await github.rest.repos.getCommit({ owner, repo, ref: sha });
+            const title = commit.data.commit.message.split('\n')[0].replace(/[\r\n]/g, ' ');
+
+            const updateComment = async (visibleChecks) => {
+              const passed = visibleChecks.filter((check) => check.status === 'completed' && isPassing(check));
+              const failed = visibleChecks.filter((check) => check.status === 'completed' && !isPassing(check));
+              const running = visibleChecks.filter((check) => check.status !== 'completed');
+              const section = (emoji, label, entries, empty) => [
+                `### ${emoji} ${label} (${entries.length})`,
+                entries.length ? entries.map((check) => `- [${markdown(check.name)}](${link(check)})`).join('\n') : empty,
+              ].join('\n');
+              const body = [
+                '<!-- piano-ci-review -->',
+                `## CI review: ${sha.slice(0, 7)}`,
+                `Commit: ${markdown(title)}`,
+                '',
+                section('✅', 'Passing', passed, '_None yet_'),
+                '',
+                section('❌', 'Failing', failed, '_None_'),
+                '',
+                section('⏳', 'Running', running, visibleChecks.length ? '_None_' : '_No check-runs reported yet_'),
+                '',
+                `_Updated from [workflow run](${ownRun})_`,
+              ].join('\n');
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: pr.number, per_page: 100,
+              });
+              const existing = comments.filter((comment) => comment.body?.includes('<!-- piano-ci-review -->'));
+              if (existing.length) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing[0].id, body });
+                await Promise.all(existing.slice(1).map((comment) => github.rest.issues.deleteComment({
+                  owner, repo, comment_id: comment.id,
+                })));
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body });
+              }
+              return running.length;
+            };
+
+            let settledSnapshots = 0;
+            let previousNames = '';
+            for (let attempt = 0; attempt < 120; attempt += 1) {
+              const visibleChecks = await getChecks();
+              const running = await updateComment(visibleChecks);
+              const names = visibleChecks.map((check) => check.name).sort().join('\n');
+              settledSnapshots = visibleChecks.length && !running && names === previousNames
+                ? settledSnapshots + 1
+                : 0;
+              if (settledSnapshots === 1) break;
+              previousNames = names;
+              await new Promise((resolve) => setTimeout(resolve, 15_000));
+            }
