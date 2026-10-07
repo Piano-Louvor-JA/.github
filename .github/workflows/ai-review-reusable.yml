@@ -40,6 +40,22 @@ jobs:
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       (github.event_name == 'issue_comment' && inputs.run-on-comment && startsWith(github.event.comment.body, '/review') || startsWith(github.event.comment.body, '/ask') || startsWith(github.event.comment.body, '/improve') || startsWith(github.event.comment.body, '/describe') && github.event.issue.pull_request && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     steps:
+      # Munir o reviewer com o conhecimento do repo: AGENTS.md = regras de ouro
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: agents
+        name: Ler AGENTS.md do repo (se existir)
+        run: |
+          if [ -f AGENTS.md ]; then
+            # limita a 6KB pra não estourar o prompt
+            head -c 6144 AGENTS.md > /tmp/agents.md
+            echo "content<<EOF" >> "$GITHUB_OUTPUT"
+            cat /tmp/agents.md >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "content=" >> "$GITHUB_OUTPUT"
+          fi
       - uses: Codium-ai/pr-agent@06a2991c0ce6b055c77fbcbd7f09faf4c5acfcaf
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -57,6 +73,8 @@ jobs:
           # pr-agent não conhece MAX_TOKENS dos modelos GLM — setar manualmente
           CONFIG.CUSTOM_MODEL_MAX_TOKENS: '32000'
           PR_REVIEWER.EXTRA_INSTRUCTIONS: >-
+            ${{ steps.agents.outputs.content }}
+
             Projeto PIANO (hinos ao piano, multi-plataforma). Foque em:
             (1) offline-first — dado do usuário nunca pode se perder com reload/background/update;
             (2) erros engolidos (catch vazio, promise sem reject tratado);
