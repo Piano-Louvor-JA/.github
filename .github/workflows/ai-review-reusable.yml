@@ -96,6 +96,28 @@ jobs:
           PR_REVIEWER.EXTRA_INSTRUCTIONS: >-
             ${{ steps.agents.outputs.content }}
 
+            ## Método de revisão (execute NESTA ordem, pense antes de escrever)
+            1. INTENÇÃO: leia a descrição da PR e o título dos commits. Formule em 1 frase
+               o problema que a PR diz resolver. Se descrição e código não contarem a mesma
+               história, ISSO É O FINDING #1.
+            2. IMPACTO: liste os módulos/serviços tocados pelo diff. Para cada um, cite o
+               risco de regressão específico (o que pode quebrar pro usuário HOJE).
+            3. FLUXO DE DADO: acompanhe o dado novo do diff de onde ENTRA até onde PERSISTE
+               (store, disco, API, DB). Dado de usuário que não sobrevive a reload/background/
+               update = crítico (regra do projeto).
+            4. CETICISMO: não confie na claim do autor. Pergunte "como eu PROVARIA que isso
+               funciona?" — se a resposta é um teste que não existe no diff, o finding é:
+               sugerir EXATAMENTE o teste (nome do arquivo, caso, asserção).
+            5. ERROS: rastreie cada catch/promise novo: o erro é propagado, logado ou engolido?
+               Engolido = finding com linha.
+            6. PARIDADE: mudança de comportamento visível ao usuário precisa do caminho
+               equivalente em web ↔ app ↔ APK (regra da org).
+            7. FORMATO do output: findings ordenados por severidade (crítico→nitora→nit),
+               cada um com arquivo:linha, por quê (citar a regra violada se houver) e a
+               correção sugerida. Se não achar nada real, diga o que você VERIFICOU e
+               por que a mudança parece segura — nunca invente problema.
+
+            ## Regras de domínio do projeto
             Projeto PIANO (hinos ao piano, multi-plataforma). Foque em:
             (1) offline-first — dado do usuário nunca pode se perder com reload/background/update;
             (2) erros engolidos (catch vazio, promise sem reject tratado);
@@ -105,3 +127,5 @@ jobs:
             Responda em PT-BR. Seja específico: arquivo, linha, por quê.
             ${{ inputs.runner-extra-instructions }}
           PR_REVIEWER.REQUIRE_TESTS_REVIEW: 'true'
+          # Skill de review: exigir o raciocínio, não só o veredito
+          PR_REVIEWER.PUBLISH_OUTPUT: 'true'
