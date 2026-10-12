@@ -1,0 +1,131 @@
+# AI Review — reusable workflow da org Piano-Louvor-JA
+# Fonte única de verdade: todos os repos chamam ESTE workflow (jobs: uses:).
+# Pra trocar a ferramenta de análise (pr-agent → OCR → outra), muda SÓ AQUI.
+name: AI Review (org reusable)
+
+on:
+  workflow_call:
+    secrets:
+      AI_REVIEW_API_KEY:
+        required: true
+      AI_REVIEW_BASE_URL:
+        required: false
+    inputs:
+      runner-extra-instructions:
+        description: 'Instruções extras de review específicas do repo (opcional)'
+        required: false
+        type: string
+        default: ''
+      run-on-comment:
+        description: 'Se true, também roda via comentário /review'
+        required: false
+        type: boolean
+        default: true
+      org-context-repo:
+        description: 'Repo com contexto org-wide (AGENTS.md, skills) — vazio = desativado'
+        required: false
+        type: string
+        default: 'Piano-Louvor-JA/docs'
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: AI Review (pr-agent)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'issue_comment' && inputs.run-on-comment && startsWith(github.event.comment.body, '/review') || startsWith(github.event.comment.body, '/ask') || startsWith(github.event.comment.body, '/improve') || startsWith(github.event.comment.body, '/describe') && github.event.issue.pull_request && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    steps:
+      # Munir o reviewer com o conhecimento do repo: AGENTS.md = regras de ouro
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: orgctx
+        name: Clonar contexto da org (docs/AGENTS.md + skills)
+        run: |
+          repo='${{ inputs.org-context-repo }}'
+          mkdir -p /tmp/orgctx
+          if [ -n "$repo" ] && [ -n "${{ secrets.AI_REVIEW_ORG_TOKEN }}" ]; then
+            git clone --depth 1 "https://x-access-token:${{ secrets.AI_REVIEW_ORG_TOKEN }}@github.com/${repo}.git" /tmp/orgctx 2>/dev/null || true
+          fi
+      - id: agents
+        name: Ler AGENTS.md do repo (se existir)
+        run: |
+          delim="ghadelimiter_$(openssl rand -hex 12)"
+          {
+            echo "content<<$delim"
+            # 1) contexto org-wide (repo docs): convenções + NUNCA faça + skills
+            if [ -f /tmp/orgctx/AGENTS.md ]; then
+              echo "## Regras da organização (docs/AGENTS.md)"
+              head -c 4096 /tmp/orgctx/AGENTS.md
+              echo ""
+            fi
+            # 2) AGENTS.md local do repo (override específico)
+            if [ -f AGENTS.md ]; then
+              echo "## Regras deste repositório (AGENTS.md)"
+              head -c 6144 AGENTS.md
+              echo ""
+            fi
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+      - uses: Codium-ai/pr-agent@06a2991c0ce6b055c77fbcbd7f09faf4c5acfcaf
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+          OPENAI.API_BASE: ${{ secrets.AI_REVIEW_BASE_URL || 'https://api.z.ai/api/coding/paas/v4' }}
+          CONFIG.GIT_PROVIDER: github
+          # LiteLLM exige provedor/modelo — prefixo openai/ = protocolo OpenAI contra a base z.ai
+          CONFIG.MODEL: openai/glm-4.6
+          CONFIG.FALLBACK_MODELS: '["openai/glm-4.5-air"]'
+          CONFIG.RESPONSE_LANGUAGE: pt-BR
+          CONFIG.PROPAGATE_TOOL_ERRORS: 'true'
+          GITHUB_ACTION_CONFIG.AUTO_REVIEW: 'true'
+          GITHUB_ACTION_CONFIG.AUTO_DESCRIBE: 'false'
+          GITHUB_ACTION_CONFIG.AUTO_IMPROVE: 'false' 
+          # pr-agent não conhece MAX_TOKENS dos modelos GLM — setar manualmente
+          CONFIG.CUSTOM_MODEL_MAX_TOKENS: '32000'
+          PR_REVIEWER.EXTRA_INSTRUCTIONS: >-
+            ${{ steps.agents.outputs.content }}
+
+            ## Método de revisão (execute NESTA ordem, pense antes de escrever)
+            1. INTENÇÃO: leia a descrição da PR e o título dos commits. Formule em 1 frase
+               o problema que a PR diz resolver. Se descrição e código não contarem a mesma
+               história, ISSO É O FINDING #1.
+            2. IMPACTO: liste os módulos/serviços tocados pelo diff. Para cada um, cite o
+               risco de regressão específico (o que pode quebrar pro usuário HOJE).
+            3. FLUXO DE DADO: acompanhe o dado novo do diff de onde ENTRA até onde PERSISTE
+               (store, disco, API, DB). Dado de usuário que não sobrevive a reload/background/
+               update = crítico (regra do projeto).
+            4. CETICISMO: não confie na claim do autor. Pergunte "como eu PROVARIA que isso
+               funciona?" — se a resposta é um teste que não existe no diff, o finding é:
+               sugerir EXATAMENTE o teste (nome do arquivo, caso, asserção).
+            5. ERROS: rastreie cada catch/promise novo: o erro é propagado, logado ou engolido?
+               Engolido = finding com linha.
+            6. PARIDADE: mudança de comportamento visível ao usuário precisa do caminho
+               equivalente em web ↔ app ↔ APK (regra da org).
+            7. FORMATO do output: findings ordenados por severidade (crítico→nitora→nit),
+               cada um com arquivo:linha, por quê (citar a regra violada se houver) e a
+               correção sugerida. Se não achar nada real, diga o que você VERIFICOU e
+               por que a mudança parece segura — nunca invente problema.
+
+            ## Regras de domínio do projeto
+            Projeto PIANO (hinos ao piano, multi-plataforma). Foque em:
+            (1) offline-first — dado do usuário nunca pode se perder com reload/background/update;
+            (2) erros engolidos (catch vazio, promise sem reject tratado);
+            (3) segredos/PII no diff;
+            (4) breaking change de API ou de store compartilhada;
+            (5) seguir o padrão do próprio repo (não importar padrão de outros projetos).
+            Responda em PT-BR. Seja específico: arquivo, linha, por quê.
+            ${{ inputs.runner-extra-instructions }}
+          PR_REVIEWER.REQUIRE_TESTS_REVIEW: 'true'
+          # Skill de review: exigir o raciocínio, não só o veredito
+          PR_REVIEWER.PUBLISH_OUTPUT: 'true'
